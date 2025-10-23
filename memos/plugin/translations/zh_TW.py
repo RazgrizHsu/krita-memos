@@ -1,0 +1,18 @@
+translations = {
+    "Memos": "備忘錄",
+    "Search...": "搜尋...",
+    "Tag:": "標籤：",
+    "All": "全部",
+    "Memo content...": "備忘錄內容...",
+    "Tags:": "標籤：",
+    "#tag1 #tag2": "#標籤1 #標籤2",
+    "New Memo": "建立新筆記",
+    "Delete": "刪除",
+    "Copy": "複製",
+    "Warning": "警告",
+    "Content cannot be empty": "內容不可為空",
+    "Confirm": "確認",
+    "Delete this memo?": "確定要刪除這個備忘錄？",
+    "Type tag and press Enter": "輸入標籤後按 Enter",
+    "Undo Delete": "復原刪除",
+}

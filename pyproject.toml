@@ -1,0 +1,14 @@
+[project]
+name = "krita-memos"
+version = "0.1.0"
+description = "Quick memo tool for Krita with search"
+
+[tool.pyright]
+include = ["src","tests"]
+pythonVersion = "3.10"
+pythonPath = "/opt/homebrew/Caskroom/miniconda/base/envs/py3/bin/python"
+
+[tool.ruff]
+ignore = ["F401","F541","E701","E722"]
+
+

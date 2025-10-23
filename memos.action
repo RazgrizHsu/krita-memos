@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ActionCollection version="2" name="Scripts">
+    <Actions category="Scripts">
+        <text>Memos</text>
+
+        <Action name="memos_toggle">
+            <icon></icon>
+            <text>Memos</text>
+            <whatsThis>Toggle Memos docker panel</whatsThis>
+            <toolTip>Quick memo tool with search and categories</toolTip>
+            <iconText>Memos</iconText>
+            <activationFlags>10000</activationFlags>
+            <activationConditions>0</activationConditions>
+            <shortcut>ctrl+shift+m</shortcut>
+            <isCheckable>false</isCheckable>
+            <statusTip>Open Memos panel</statusTip>
+        </Action>
+    </Actions>
+</ActionCollection>

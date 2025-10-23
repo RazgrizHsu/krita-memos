@@ -1,0 +1,619 @@
+#!/usr/bin/env python3
+
+import os
+import sys
+import shutil
+import filecmp
+import platform
+from pathlib import Path
+
+
+def getch():
+    if platform.system() == "Windows":
+        import msvcrt
+        return msvcrt.getch().decode('utf-8')
+    else:
+        import tty
+        import termios
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setraw(fd)
+            ch = sys.stdin.read(1)
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        return ch
+
+
+class DebugTool:
+    COMMANDS = {
+        "run": ("run", "install and run"),
+        "setup": ("setup", "setup into krita"),
+        "uninstall": ("uninstall", "remove from krita"),
+        "launch": ("launch_krita_debug", "launch Krita (terminal mode)", "Darwin"),
+        "publish": ("publish", "github release"),
+    }
+
+    def __init__(self):
+        self.project_root = Path(__file__).parent
+        self.plugin_dir = self.project_root / "memos"
+        self.desktop_file = self.project_root / "memos.desktop"
+        self.action_file = self.project_root / "memos.action"
+
+        self.krita_resource_path = self.get_krita_resource_path()
+        self.krita_pykrita = self.krita_resource_path / "pykrita"
+        self.krita_actions = self.krita_resource_path / "actions"
+
+    def get_krita_resource_path(self):
+        system = platform.system()
+
+        if system == "Linux":
+            return Path.home() / ".local/share/krita"
+        elif system == "Darwin":  # macOS
+            return Path.home() / "Library/Application Support/krita"
+        elif system == "Windows":
+            return Path(os.environ.get("APPDATA", "")) / "krita"
+        else:
+            raise RuntimeError(f"Unsupported OS: {system}")
+
+    def compare_files(self, src, dst):
+        if not dst.exists():
+            return False
+        return filecmp.cmp(src, dst, shallow=False)
+
+    def compare_directories(self, src_dir, dst_dir):
+        if not dst_dir.exists():
+            return {"missing": True, "different": [], "same": []}
+
+        result = {"missing": False, "different": [], "same": []}
+
+        for src_file in src_dir.rglob("*"):
+            if src_file.is_file():
+                rel_path = src_file.relative_to(src_dir)
+                dst_file = dst_dir / rel_path
+
+                if not dst_file.exists():
+                    result["different"].append(str(rel_path))
+                elif not self.compare_files(src_file, dst_file):
+                    result["different"].append(str(rel_path))
+                else:
+                    result["same"].append(str(rel_path))
+
+        return result
+
+    def copy_directory(self, src, dst):
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+
+    def copy_file(self, src, dst):
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    def setup(self):
+        print("=== Krita Memos Setup ===\n")
+        print(f"Project root: {self.project_root}")
+        print(f"Krita resource path: {self.krita_resource_path}\n")
+
+        if not self.krita_resource_path.exists():
+            print(f"Error: Krita resource directory not found")
+            print(f"Please verify Krita is installed")
+            return
+
+        self.krita_pykrita.mkdir(parents=True, exist_ok=True)
+        self.krita_actions.mkdir(parents=True, exist_ok=True)
+
+        target_plugin_dir = self.krita_pykrita / "memos"
+        target_desktop = self.krita_pykrita / "memos.desktop"
+        target_action = self.krita_actions / "memos.action"
+
+        print("Checking installation...\n")
+
+        needs_update = []
+
+        plugin_cmp = self.compare_directories(self.plugin_dir, target_plugin_dir)
+        if plugin_cmp["missing"]:
+            print("✗ Plugin directory: not installed")
+            needs_update.append(("plugin", self.plugin_dir, target_plugin_dir))
+        elif plugin_cmp["different"]:
+            print(f"! Plugin directory: {len(plugin_cmp['different'])} files differ")
+            for f in plugin_cmp["different"][:5]:
+                print(f"  - {f}")
+            if len(plugin_cmp["different"]) > 5:
+                print(f"  ... and {len(plugin_cmp['different']) - 5} more files")
+            needs_update.append(("plugin", self.plugin_dir, target_plugin_dir))
+        else:
+            print("✓ Plugin directory: installed and up to date")
+
+        if not self.compare_files(self.desktop_file, target_desktop):
+            if target_desktop.exists():
+                print("! desktop file: content differs")
+            else:
+                print("✗ desktop file: not installed")
+            needs_update.append(("desktop", self.desktop_file, target_desktop))
+        else:
+            print("✓ desktop file: installed and up to date")
+
+        if not self.compare_files(self.action_file, target_action):
+            if target_action.exists():
+                print("! action file: content differs")
+            else:
+                print("✗ action file: not installed")
+            needs_update.append(("action", self.action_file, target_action))
+        else:
+            print("✓ action file: installed and up to date")
+
+        if not needs_update:
+            print("\nAll files are up to date")
+            return
+
+        print(f"\nNeed to update {len(needs_update)} items")
+
+        print("\nContinue install/update? (y/n): ", end='', flush=True)
+        response = getch().lower()
+        print(response)
+        if response != 'y':
+            print("Cancelled")
+            return
+
+        print("\nInstalling...\n")
+
+        for name, src, dst in needs_update:
+            try:
+                if name == "plugin":
+                    print(f"Copying plugin directory...")
+                    self.copy_directory(src, dst)
+                else:
+                    print(f"Copying {name} file...")
+                    self.copy_file(src, dst)
+                print(f"  ✓ {dst}")
+            except Exception as e:
+                print(f"  ✗ Failed: {e}")
+                return
+
+        print("\n=== Installation Complete ===")
+        print("\nNext steps:")
+        print("1. Restart Krita")
+        print("2. Settings → Configure Krita → Python Plugin Manager")
+        print("3. Enable 'Memos'")
+        print("4. Restart Krita again")
+        print("5. Settings → Dockers → Memos")
+
+    def uninstall(self):
+        print("=== Uninstall Krita Memos ===\n")
+
+        target_plugin_dir = self.krita_pykrita / "memos"
+        target_desktop = self.krita_pykrita / "memos.desktop"
+        target_action = self.krita_actions / "memos.action"
+
+        to_remove = []
+
+        if target_plugin_dir.exists():
+            to_remove.append(("plugin directory", target_plugin_dir))
+        if target_desktop.exists():
+            to_remove.append(("desktop file", target_desktop))
+        if target_action.exists():
+            to_remove.append(("action file", target_action))
+
+        if not to_remove:
+            print("No installed files found")
+            return
+
+        print("Will remove the following:")
+        for name, path in to_remove:
+            print(f"  - {name}: {path}")
+
+        print("\nConfirm removal? (y/n): ", end='', flush=True)
+        response = getch().lower()
+        print(response)
+        if response != 'y':
+            print("Cancelled")
+            return
+
+        print()
+        for name, path in to_remove:
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                print(f"✓ Removed {name}")
+            except Exception as e:
+                print(f"✗ Failed to remove {name}: {e}")
+
+        print("\nUninstall complete")
+
+    def find_krita_app(self):
+        import subprocess
+
+        print("Searching for Krita.app...")
+        try:
+            result = subprocess.run(
+                ["mdfind", "kMDItemKind == 'Application' && kMDItemFSName == 'krita.app'"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            paths = [p.strip() for p in result.stdout.split('\n') if p.strip()]
+
+            if paths:
+                if len(paths) == 1:
+                    return Path(paths[0])
+                else:
+                    print(f"\nFound multiple Krita.app:")
+                    for i, p in enumerate(paths, 1):
+                        print(f"  {i}. {p}")
+
+                    print(f"\nChoose (1-{len(paths)}): ", end='', flush=True)
+                    choice = getch()
+                    print(choice)
+                    try:
+                        idx = int(choice) - 1
+                        if 0 <= idx < len(paths):
+                            return Path(paths[idx])
+                    except:
+                        pass
+
+            # Try common locations
+            common_paths = [
+                Path("/Applications/krita.app"),
+                Path.home() / "Applications/krita.app"
+            ]
+
+            for p in common_paths:
+                if p.exists():
+                    return p
+
+            return None
+
+        except Exception as e:
+            print(f"Search failed: {e}")
+            return None
+
+
+    def is_krita_running(self):
+        import subprocess
+
+        try:
+            if platform.system() == "Darwin":
+                result = subprocess.run(
+                    ["pgrep", "-x", "krita"],
+                    capture_output=True
+                )
+                return result.returncode == 0
+            elif platform.system() == "Linux":
+                result = subprocess.run(
+                    ["pgrep", "-x", "krita"],
+                    capture_output=True
+                )
+                return result.returncode == 0
+            elif platform.system() == "Windows":
+                result = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq krita.exe"],
+                    capture_output=True,
+                    text=True
+                )
+                return "krita.exe" in result.stdout
+        except:
+            pass
+
+        return False
+
+    def run(self):
+        print("=== Krita Memos Development Mode ===\n")
+
+        if self.is_krita_running():
+            print("✗ Error: Krita is running")
+            print("\nPlease close Krita first, then run again:")
+            print("  python debug run")
+            sys.exit(1)
+
+        print("=== Updating Plugin ===\n")
+
+        self.krita_pykrita.mkdir(parents=True, exist_ok=True)
+        self.krita_actions.mkdir(parents=True, exist_ok=True)
+
+        target_plugin_dir = self.krita_pykrita / "memos"
+        target_desktop = self.krita_pykrita / "memos.desktop"
+        target_action = self.krita_actions / "memos.action"
+
+        try:
+            print("Copying plugin directory...")
+            self.copy_directory(self.plugin_dir, target_plugin_dir)
+            print(f"  ✓ {target_plugin_dir}")
+
+            print("Copying desktop file...")
+            self.copy_file(self.desktop_file, target_desktop)
+            print(f"  ✓ {target_desktop}")
+
+            print("Copying action file...")
+            self.copy_file(self.action_file, target_action)
+            print(f"  ✓ {target_action}")
+
+        except Exception as e:
+            print(f"\n✗ Update failed: {e}")
+            sys.exit(1)
+
+        print("\n" + "=" * 50)
+        print("\n✓ Done! Launching Krita...\n")
+
+        if platform.system() == "Darwin":
+            self.launch_krita_debug()
+        else:
+            print("Please launch Krita manually to test the plugin")
+
+    def launch_krita_debug(self):
+        if platform.system() != "Darwin":
+            print("This feature is only available on macOS")
+            return
+
+        krita_app = self.find_krita_app()
+
+        if not krita_app:
+            print("\nError: Krita.app not found")
+            manual_path = input("Enter full path to Krita.app (or press Enter to cancel): ").strip()
+            if manual_path:
+                krita_app = Path(manual_path)
+                if not krita_app.exists():
+                    print("Path does not exist")
+                    return
+            else:
+                return
+
+        krita_bin = krita_app / "Contents/MacOS/krita"
+        if not krita_bin.exists():
+            print(f"Error: Krita binary not found: {krita_bin}")
+            return
+
+        print(f"\nUsing: {krita_app}")
+        print("\nLaunching Krita (terminal mode)...")
+        print("All Python output will display in this terminal")
+        print("Press Ctrl+C to stop\n")
+
+        import subprocess
+        try:
+            subprocess.run([str(krita_bin)])
+        except KeyboardInterrupt:
+            print("\nStopped")
+
+    def publish(self):
+        import subprocess
+        import zipfile
+        import re
+
+        print("=== Krita Memos Release Tool ===\n")
+
+        pyproject_file = self.project_root / "pyproject.toml"
+        if not pyproject_file.exists():
+            print("✗ Error: pyproject.toml not found")
+            return
+
+        content = pyproject_file.read_text()
+        match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+        if not match:
+            print("✗ Error: Cannot read version from pyproject.toml")
+            return
+
+        version = match.group(1)
+        print(f"Version: {version}\n")
+
+        print("Checking git status...")
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root
+            )
+            if result.stdout.strip():
+                print("✗ Error: Uncommitted changes detected")
+                print("\nPlease commit all changes first:")
+                print("  git add .")
+                print("  git commit -m \"message\"")
+                return
+            print("✓ Git status clean\n")
+        except Exception as e:
+            print(f"✗ Git status check failed: {e}")
+            return
+
+        zip_filename = f"krita-memos-{version}.zip"
+        zip_path = self.project_root / zip_filename
+
+        if zip_path.exists():
+            print(f"Existing file found: {zip_filename}")
+            print("Overwrite? (y/n): ", end='', flush=True)
+            response = getch().lower()
+            print(response)
+            if response != 'y':
+                print("Cancelled")
+                return
+            zip_path.unlink()
+
+        print(f"Creating zip file: {zip_filename}")
+        try:
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for file_path in self.plugin_dir.rglob("*"):
+                    if file_path.is_file():
+                        arcname = str(file_path.relative_to(self.project_root))
+                        zf.write(file_path, arcname)
+                        print(f"  + {arcname}")
+
+                zf.write(self.desktop_file, self.desktop_file.name)
+                print(f"  + {self.desktop_file.name}")
+
+                zf.write(self.action_file, self.action_file.name)
+                print(f"  + {self.action_file.name}")
+
+            print(f"\n✓ Zip file created: {zip_path}")
+        except Exception as e:
+            print(f"\n✗ Zip creation failed: {e}")
+            return
+
+        tag_name = f"v{version}"
+        print(f"\nCreating git tag: {tag_name}")
+        try:
+            result = subprocess.run(
+                ["git", "tag", "-l", tag_name],
+                capture_output=True,
+                text=True,
+                cwd=self.project_root
+            )
+            if result.stdout.strip():
+                print(f"✗ Tag {tag_name} already exists")
+                print("Delete and recreate? (y/n): ", end='', flush=True)
+                response = getch().lower()
+                print(response)
+                if response != 'y':
+                    print("Cancelled")
+                    return
+                subprocess.run(
+                    ["git", "tag", "-d", tag_name],
+                    cwd=self.project_root,
+                    check=True
+                )
+
+            subprocess.run(
+                ["git", "tag", "-a", tag_name, "-m", f"Release {version}"],
+                cwd=self.project_root,
+                check=True
+            )
+            print(f"✓ Tag {tag_name} created")
+        except Exception as e:
+            print(f"✗ Tag creation failed: {e}")
+            return
+
+        print("\nPushing tag to GitHub...")
+        try:
+            subprocess.run(
+                ["git", "push", "origin", tag_name],
+                cwd=self.project_root,
+                check=True
+            )
+            print(f"✓ Tag pushed")
+        except Exception as e:
+            print(f"✗ Tag push failed: {e}")
+            return
+
+        print("\nChecking gh cli...")
+        try:
+            subprocess.run(
+                ["gh", "--version"],
+                capture_output=True,
+                check=True
+            )
+        except Exception:
+            print("✗ Error: gh cli not found")
+            print("\nPlease install GitHub CLI:")
+            print("  https://cli.github.com/")
+            return
+
+        print("Creating GitHub Release...")
+        try:
+            subprocess.run(
+                [
+                    "gh", "release", "create", tag_name,
+                    str(zip_path),
+                    "--title", f"Krita Memos {version}",
+                    "--notes", f"Release version {version}"
+                ],
+                cwd=self.project_root,
+                check=True
+            )
+            print(f"\n✓ Release published: {tag_name}")
+            print(f"✓ Attachment: {zip_filename}")
+        except Exception as e:
+            print(f"\n✗ Release failed: {e}")
+            return
+
+        print("\n=== Release Complete ===")
+
+    def get_available_commands(self):
+        cmds = []
+        for cmd_name, cmd_info in self.COMMANDS.items():
+            if len(cmd_info) == 3 and cmd_info[2] != platform.system():
+                continue
+            cmds.append((cmd_name, cmd_info[0], cmd_info[1]))
+        return cmds
+
+    def execute_command(self, cmd_name):
+        cmd_info = self.COMMANDS.get(cmd_name)
+        if not cmd_info:
+            return False
+
+        if len(cmd_info) == 3 and cmd_info[2] != platform.system():
+            print(f"This command is only available on {cmd_info[2]}")
+            return False
+
+        method_name = cmd_info[0]
+        method = getattr(self, method_name, None)
+        if method:
+            method()
+            return True
+        return False
+
+    def interactive(self):
+        print("=== Krita Memos Debug Tool ===")
+
+        cmds = self.get_available_commands()
+
+        while True:
+            print("\nMenu:")
+            for i, (cmd_name, _, desc) in enumerate(cmds, 1):
+                print(f"  {i}. {cmd_name:12} - {desc}")
+            print(f"  q. exit         - exit")
+
+            try:
+                print(f"\nChoose (1-{len(cmds)}, q): ", end='', flush=True)
+                choice = getch()
+                print(choice)
+
+                if choice.lower() in ["q", "\x03"]:
+                    print("Goodbye!")
+                    break
+
+                try:
+                    idx = int(choice) - 1
+                    if 0 <= idx < len(cmds):
+                        self.execute_command(cmds[idx][0])
+                        continue
+                    else:
+                        print(f"Invalid choice: {choice}")
+                except ValueError:
+                    print(f"Invalid choice: {choice}")
+
+            except KeyboardInterrupt:
+                print("\n\nInterrupted")
+                break
+            except EOFError:
+                print("\nGoodbye!")
+                break
+
+
+def main():
+    tool = DebugTool()
+
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+
+        if cmd in ["interactive", "i"]:
+            tool.interactive()
+        elif cmd in ["help", "-h", "--help"]:
+            print("Usage: python debug [command]")
+            print("\nCommands:")
+            for cmd_name, cmd_info in tool.COMMANDS.items():
+                if len(cmd_info) == 3 and cmd_info[2] != platform.system():
+                    continue
+                print(f"  {cmd_name:12} - {cmd_info[1]}")
+            print("  interactive  - enter interactive mode")
+            print("  help         - show this help")
+            print("\nDefault: interactive mode")
+        elif not tool.execute_command(cmd):
+            print(f"Unknown command: {cmd}")
+            print("Use 'python debug help' to see available commands")
+    else:
+        tool.interactive()
+
+
+if __name__ == "__main__":
+    main()

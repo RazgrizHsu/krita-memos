@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=memos
+X-Python-2-Compatible=false
+X-Krita-Manual=memos_manual.html
+Name=Memos
+Name[zh_TW]=備忘錄
+Comment=Quick memo tool for Krita with search, categories and hashtags
+Comment[zh_TW]=Krita 的快速備忘錄工具，支援搜尋、分類和標籤
