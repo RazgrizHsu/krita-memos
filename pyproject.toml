@@ -1,6 +1,6 @@
 [project]
 name = "krita-memos"
-version = "0.1.0"
+version = "0.1.1"
 description = "Quick memo tool for Krita with search"
 
 [tool.pyright]

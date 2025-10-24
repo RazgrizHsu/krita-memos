@@ -202,6 +202,9 @@ class MemosDocker(DockWidget):
             if doc:
                 lg.log(f"Document changed: {doc.fileName()}")
                 self.store.set_document(doc)
+                self.currentMemo = None
+                self.editorWidget.hide()
+                self.memoList.clearSelection()
                 self.refreshFilters()
                 self.refreshList()
             else:
