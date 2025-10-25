@@ -49,6 +49,12 @@ class MemoListItem(QWidget):
         self.copyBtn.setToolTip(i18n("Copy"))
         layout.addWidget(self.copyBtn, 0, 2)
 
+        self.editBtn = QPushButton()
+        self.editBtn.setIcon(Krita.instance().icon("document-edit"))
+        self.editBtn.setFixedSize(24, 24)
+        self.editBtn.setToolTip(i18n("Edit"))
+        layout.addWidget(self.editBtn, 0, 3)
+
         self.deleteBtn = QPushButton("✕")
         self.deleteBtn.setFixedSize(24, 24)
         self.deleteBtn.setToolTip(i18n("Delete"))
@@ -64,35 +70,11 @@ class MemoListItem(QWidget):
                 color: #ff0000;
             }
         """)
-        layout.addWidget(self.deleteBtn, 0, 3)
+        layout.addWidget(self.deleteBtn, 0, 4)
 
         layout.setColumnStretch(1, 1)
 
         self.setLayout(layout)
-
-
-class MemoTextEdit(QTextEdit):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.cornerBtn = None
-
-    def setCornerButton(self, btn):
-        self.cornerBtn = btn
-        self.cornerBtn.setParent(self)
-        self.updateCornerButton()
-
-    def resizeEvent(self, evt):
-        super().resizeEvent(evt)
-        self.updateCornerButton()
-
-    def updateCornerButton(self):
-        if self.cornerBtn:
-            btnW = self.cornerBtn.width()
-            btnH = self.cornerBtn.height()
-            x = self.width() - btnW - 5
-            y = self.height() - btnH - 5
-            self.cornerBtn.move(x, y)
-            self.cornerBtn.raise_()
 
 
 class MemosDocker(DockWidget):
@@ -150,23 +132,36 @@ class MemosDocker(DockWidget):
         splitter.addWidget(self.memoList)
 
         self.editorWidget = QWidget()
-        editorLayout = QVBoxLayout()
+        editorLayout = QGridLayout()
         self.editorWidget.setLayout(editorLayout)
 
-        self.contentEdit = MemoTextEdit()
+        self.contentEdit = QTextEdit()
         self.contentEdit.setPlaceholderText(i18n("Memo content..."))
-        editorLayout.addWidget(self.contentEdit)
+        editorLayout.addWidget(self.contentEdit, 0, 0)
+
+        buttonsLayout = QVBoxLayout()
+        buttonsLayout.setSpacing(4)
 
         self.copyBtn = QPushButton(i18n("Copy"))
         self.copyBtn.setIcon(Krita.instance().icon("edit-copy"))
-        self.copyBtn.setFixedSize(60, 24)
-        self.contentEdit.setCornerButton(self.copyBtn)
+        buttonsLayout.addWidget(self.copyBtn)
+
+        self.saveBtn = QPushButton(i18n("Save"))
+        self.saveBtn.setIcon(Krita.instance().icon("document-save"))
+        buttonsLayout.addWidget(self.saveBtn)
+
+        buttonsLayout.addStretch()
+
+        from PyQt5.QtWidgets import QFrame
+        buttonsFrame = QFrame()
+        buttonsFrame.setLayout(buttonsLayout)
+        editorLayout.addWidget(buttonsFrame, 0, 1, Qt.AlignTop)
 
         tagsRow = QHBoxLayout()
         tagsRow.addWidget(QLabel(i18n("Tags:")))
         self.tagsEdit = TagEdit()
         tagsRow.addWidget(self.tagsEdit, 1)
-        editorLayout.addLayout(tagsRow)
+        editorLayout.addLayout(tagsRow, 1, 0)
 
         splitter.addWidget(self.editorWidget)
         layout.addWidget(splitter)
@@ -179,6 +174,7 @@ class MemosDocker(DockWidget):
         self.memoList.itemClicked.connect(self.onMemoSelected)
         self.newBtn.clicked.connect(self.onNew)
         self.copyBtn.clicked.connect(self.onCopy)
+        self.saveBtn.clicked.connect(self.onSave)
 
         self.contentEdit.textChanged.connect(self.onContentChanged)
         self.tagsEdit.tagsChanged.connect(self.onContentChanged)
@@ -252,6 +248,7 @@ class MemosDocker(DockWidget):
             widget = MemoListItem(memo)
             widget.deleteBtn.clicked.connect(lambda checked, m=memo: self.onDeleteMemo(m))
             widget.copyBtn.clicked.connect(lambda checked, m=memo: self.onCopyMemo(m))
+            widget.editBtn.clicked.connect(lambda checked, m=memo: self.onEditMemo(m))
             item.setSizeHint(widget.sizeHint())
             self.memoList.setItemWidget(item, widget)
 
@@ -265,22 +262,17 @@ class MemosDocker(DockWidget):
         self.refreshList()
 
     def onMemoSelected(self, item):
+        pass
+
+    def onEditMemo(self, memo):
         self.autoSaveTimer.stop()
-        uid = item.data(Qt.UserRole)
-        memo = self.store.get(uid)
-        if memo:
-            if self.currentMemo and self.currentMemo.uid == uid:
-                self.currentMemo = None
-                self.editorWidget.hide()
-                self.memoList.clearSelection()
-            else:
-                self.currentMemo = memo
-                self.contentEdit.setText(memo.content)
-                self.tagsEdit.setTags(memo.hashtags)
-                self.lastSavedContent = memo.content
-                self.lastSavedTags = memo.hashtags[:]
-                self.hasUnsavedChanges = False
-                self.editorWidget.show()
+        self.currentMemo = memo
+        self.contentEdit.setText(memo.content)
+        self.tagsEdit.setTags(memo.hashtags)
+        self.lastSavedContent = memo.content
+        self.lastSavedTags = memo.hashtags[:]
+        self.hasUnsavedChanges = False
+        self.editorWidget.show()
 
     def onContentChanged(self):
         from .log import lg
@@ -411,6 +403,16 @@ class MemosDocker(DockWidget):
                 clipboard.setText(memo.content)
         except Exception as e:
             lg.error(f"Copy memo failed: {e}")
+
+    def onSave(self):
+        from .log import lg
+        lg.log("onSave called")
+        self.autoSaveTimer.stop()
+        if self.hasUnsavedChanges:
+            self.saveMemo()
+        self.editorWidget.hide()
+        self.currentMemo = None
+        self.memoList.clearSelection()
 
     def onDeleteMemo(self, memo):
         reply = QMessageBox.question(

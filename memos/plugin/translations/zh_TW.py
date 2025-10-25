@@ -9,6 +9,8 @@ translations = {
     "New Memo": "建立新筆記",
     "Delete": "刪除",
     "Copy": "複製",
+    "Edit": "編輯",
+    "Save": "儲存",
     "Warning": "警告",
     "Content cannot be empty": "內容不可為空",
     "Confirm": "確認",
