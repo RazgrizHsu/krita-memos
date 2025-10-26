@@ -206,7 +206,14 @@ class MemosDocker(DockWidget):
                 self.refreshFilters()
                 self.refreshList()
             else:
-                lg.log("No active document")
+                lg.log("No active document - clearing UI")
+                self.store.doc = None
+                self.store.memos = []
+                self.currentMemo = None
+                self.editorWidget.hide()
+                self.memoList.clearSelection()
+                self.memoList.clear()
+                self.setWindowTitle(i18n("Memos"))
         except Exception as e:
             lg.error(f"onDocumentChanged error: {e}")
             import traceback
@@ -263,6 +270,9 @@ class MemosDocker(DockWidget):
     def onFilterChanged(self):
         self.refreshList()
 
+    def hasValidDocument(self):
+        return (self.canvas() is not None) and (self.canvas().view() is not None)
+
     def closeEditorAndExecute(self, callback):
         if self.editorWidget.isVisible():
             self.autoSaveTimer.stop()
@@ -271,7 +281,8 @@ class MemosDocker(DockWidget):
             self.editorWidget.hide()
             self.currentMemo = None
             self.memoList.clearSelection()
-        callback()
+        if self.hasValidDocument():
+            callback()
 
     def onMemoSelected(self, item):
         if self.editorWidget.isVisible():
@@ -285,6 +296,10 @@ class MemosDocker(DockWidget):
 
     def onListReordered(self):
         from .log import lg
+        if not self.hasValidDocument():
+            lg.log("List reorder skipped: no document")
+            return
+
         lg.log("List reordered")
         new_order = []
         for i in range(self.memoList.count()):
@@ -326,15 +341,9 @@ class MemosDocker(DockWidget):
     def createNewMemo(self):
         from .log import lg
         try:
-            app = Krita.instance()
-            doc = app.activeDocument()
-
-            if not doc:
+            if not self.hasValidDocument():
                 lg.log("Create memo skipped: no document")
                 return
-
-            if doc != self.store.doc:
-                self.store.set_document(doc)
 
             content = self.contentEdit.toPlainText().strip()
             hashtags = self.tagsEdit.getTags()
@@ -359,7 +368,7 @@ class MemosDocker(DockWidget):
             import traceback
             traceback.print_exc()
 
-    def onAutoSave(self):
+    def saveMemo(self):
         from .log import lg
         try:
             if not self.hasUnsavedChanges:
@@ -368,15 +377,9 @@ class MemosDocker(DockWidget):
             if not self.currentMemo:
                 return
 
-            app = Krita.instance()
-            doc = app.activeDocument()
-
-            if not doc:
-                lg.log("AutoSave skipped: no document")
+            if not self.hasValidDocument():
+                lg.log("Save skipped: no document")
                 return
-
-            if doc != self.store.doc:
-                self.store.set_document(doc)
 
             content = self.contentEdit.toPlainText().strip()
             hashtags = self.tagsEdit.getTags()
@@ -389,7 +392,7 @@ class MemosDocker(DockWidget):
                 self.hasUnsavedChanges = False
                 return
 
-            lg.log(f"AutoSave: Updating memo {self.currentMemo.uid}")
+            lg.log(f"Save: Updating memo {self.currentMemo.uid}")
             self.store.update(self.currentMemo.uid, content, hashtags)
 
             self.lastSavedContent = content
@@ -398,15 +401,23 @@ class MemosDocker(DockWidget):
 
             self.refreshFilters()
             self.refreshList()
-            lg.log("AutoSave completed")
+            lg.log("Save completed")
         except Exception as e:
-            lg.error(f"AutoSave failed: {e}")
+            lg.error(f"Save failed: {e}")
             import traceback
             traceback.print_exc()
+
+    def onAutoSave(self):
+        self.saveMemo()
 
     def onNew(self):
         from .log import lg
         lg.log("onNew called")
+
+        if not self.hasValidDocument():
+            lg.log("onNew aborted: no active document")
+            return
+
         self.autoSaveTimer.stop()
         self.currentMemo = None
         self.hasUnsavedChanges = False
@@ -466,6 +477,10 @@ class MemosDocker(DockWidget):
     def showContextMenu(self, pos):
         from .log import lg
         try:
+            if not self.hasValidDocument():
+                lg.log("Context menu skipped: no document")
+                return
+
             menu = QMenu(self)
 
             undoAction = menu.addAction(Krita.instance().icon("edit-undo"), i18n("Undo Delete"))
@@ -498,6 +513,11 @@ class MemosDocker(DockWidget):
             traceback.print_exc()
 
     def onUndoDelete(self):
+        from .log import lg
+        if not self.hasValidDocument():
+            lg.log("Undo delete skipped: no document")
+            return
+
         if self.deletedMemos:
             memo = self.deletedMemos.pop()
             self.store.memos.append(memo)
