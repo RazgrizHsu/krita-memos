@@ -31,7 +31,7 @@ class DebugTool:
         "setup": ("setup", "setup into krita"),
         "uninstall": ("uninstall", "remove from krita"),
         "launch": ("launch_krita_debug", "launch Krita (terminal mode)", "Darwin"),
-        "publish": ("publish", "github release"),
+        "pub": ("publish", "github release"),
     }
 
     def __init__(self):
@@ -398,25 +398,6 @@ class DebugTool:
         version = match.group(1)
         print(f"Version: {version}\n")
 
-        print("Checking git status...")
-        try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                capture_output=True,
-                text=True,
-                cwd=self.project_root
-            )
-            if result.stdout.strip():
-                print("✗ Error: Uncommitted changes detected")
-                print("\nPlease commit all changes first:")
-                print("  git add .")
-                print("  git commit -m \"message\"")
-                return
-            print("✓ Git status clean\n")
-        except Exception as e:
-            print(f"✗ Git status check failed: {e}")
-            return
-
         zip_filename = f"krita-memos-{version}.zip"
         zip_path = self.project_root / zip_filename
 
@@ -451,27 +432,37 @@ class DebugTool:
             return
 
         tag_name = f"v{version}"
-        print(f"\nCreating git tag: {tag_name}")
+        print(f"\nPreparing tag: {tag_name}")
         try:
             result = subprocess.run(
-                ["git", "tag", "-l", tag_name],
+                ["git", "rev-parse", tag_name],
                 capture_output=True,
                 text=True,
                 cwd=self.project_root
             )
-            if result.stdout.strip():
-                print(f"✗ Tag {tag_name} already exists")
-                print("Delete and recreate? (y/n): ", end='', flush=True)
-                response = getch().lower()
-                print(response)
-                if response != 'y':
-                    print("Cancelled")
-                    return
+            if result.returncode == 0:
+                print(f"Tag {tag_name} exists, deleting old version...")
+
                 subprocess.run(
                     ["git", "tag", "-d", tag_name],
                     cwd=self.project_root,
-                    check=True
+                    capture_output=True
                 )
+                print(f"✓ Deleted local tag")
+
+                subprocess.run(
+                    ["git", "push", "origin", "--delete", tag_name],
+                    cwd=self.project_root,
+                    capture_output=True
+                )
+                print(f"✓ Deleted remote tag")
+
+                subprocess.run(
+                    ["gh", "release", "delete", tag_name, "--yes"],
+                    cwd=self.project_root,
+                    capture_output=True
+                )
+                print(f"✓ Deleted GitHub release")
 
             subprocess.run(
                 ["git", "tag", "-a", tag_name, "-m", f"Release {version}"],
@@ -508,6 +499,45 @@ class DebugTool:
             print("  https://cli.github.com/")
             return
 
+        print("Generating release notes...")
+        latest_tag = subprocess.run(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            capture_output=True,
+            text=True,
+            cwd=self.project_root
+        ).stdout.strip()
+
+        if latest_tag:
+            commit_range = f"{latest_tag}..HEAD"
+            print(f"Commits since {latest_tag}")
+        else:
+            commit_range = "HEAD~10..HEAD"
+            print("No tags found, using last 10 commits")
+
+        commits_result = subprocess.run(
+            ["git", "log", "--oneline", "--no-merges", commit_range],
+            capture_output=True,
+            text=True,
+            cwd=self.project_root
+        )
+
+        if commits_result.stdout.strip():
+            commits = "\n".join(f"- {line}" for line in commits_result.stdout.strip().split("\n"))
+        else:
+            commits = "- No new commits"
+
+        notes = f"""Release {version}
+
+## Changes
+{commits}
+
+## Installation
+1. Download `{zip_filename}`
+2. In Krita: Tools → Scripts → Import Python Plugin...
+3. Select the downloaded ZIP file
+4. Restart Krita
+5. Settings → Dockers → Memos"""
+
         print("Creating GitHub Release...")
         try:
             subprocess.run(
@@ -515,7 +545,7 @@ class DebugTool:
                     "gh", "release", "create", tag_name,
                     str(zip_path),
                     "--title", f"Krita Memos {version}",
-                    "--notes", f"Release version {version}"
+                    "--notes", notes
                 ],
                 cwd=self.project_root,
                 check=True

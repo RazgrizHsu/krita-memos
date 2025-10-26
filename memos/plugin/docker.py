@@ -129,6 +129,7 @@ class MemosDocker(DockWidget):
         self.memoList.setSpacing(1)
         self.memoList.setContextMenuPolicy(Qt.CustomContextMenu)
         self.memoList.customContextMenuRequested.connect(self.showContextMenu)
+        self.memoList.setDragDropMode(QListWidget.InternalMove)
         splitter.addWidget(self.memoList)
 
         self.editorWidget = QWidget()
@@ -142,13 +143,12 @@ class MemosDocker(DockWidget):
         buttonsLayout = QVBoxLayout()
         buttonsLayout.setSpacing(4)
 
-        self.copyBtn = QPushButton(i18n("Copy"))
-        self.copyBtn.setIcon(Krita.instance().icon("edit-copy"))
-        buttonsLayout.addWidget(self.copyBtn)
+        # self.copyBtn = QPushButton(i18n("Copy"))
+        # self.copyBtn.setIcon(Krita.instance().icon("edit-copy"))
+        # buttonsLayout.addWidget(self.copyBtn)
 
-        self.saveBtn = QPushButton(i18n("Save"))
-        self.saveBtn.setIcon(Krita.instance().icon("document-save"))
-        buttonsLayout.addWidget(self.saveBtn)
+        self.closeBtn = QPushButton(i18n("Close"))
+        buttonsLayout.addWidget(self.closeBtn)
 
         buttonsLayout.addStretch()
 
@@ -172,9 +172,11 @@ class MemosDocker(DockWidget):
         self.searchInput.textChanged.connect(self.onSearchChanged)
         self.tagFilter.currentIndexChanged.connect(self.onFilterChanged)
         self.memoList.itemClicked.connect(self.onMemoSelected)
+        self.memoList.itemDoubleClicked.connect(self.onMemoDoubleClicked)
+        self.memoList.model().rowsMoved.connect(self.onListReordered)
         self.newBtn.clicked.connect(self.onNew)
-        self.copyBtn.clicked.connect(self.onCopy)
-        self.saveBtn.clicked.connect(self.onSave)
+        # self.copyBtn.clicked.connect(self.onCopy)
+        self.closeBtn.clicked.connect(self.onClose)
 
         self.contentEdit.textChanged.connect(self.onContentChanged)
         self.tagsEdit.tagsChanged.connect(self.onContentChanged)
@@ -246,9 +248,9 @@ class MemosDocker(DockWidget):
             self.memoList.addItem(item)
 
             widget = MemoListItem(memo)
-            widget.deleteBtn.clicked.connect(lambda checked, m=memo: self.onDeleteMemo(m))
-            widget.copyBtn.clicked.connect(lambda checked, m=memo: self.onCopyMemo(m))
-            widget.editBtn.clicked.connect(lambda checked, m=memo: self.onEditMemo(m))
+            widget.deleteBtn.clicked.connect(lambda checked, m=memo: self.closeEditorAndExecute(lambda: self.onDeleteMemo(m)))
+            widget.copyBtn.clicked.connect(lambda checked, m=memo: self.closeEditorAndExecute(lambda: self.onCopyMemo(m)))
+            widget.editBtn.clicked.connect(lambda checked, m=memo: self.closeEditorAndExecute(lambda: self.onEditMemo(m)))
             item.setSizeHint(widget.sizeHint())
             self.memoList.setItemWidget(item, widget)
 
@@ -261,8 +263,39 @@ class MemosDocker(DockWidget):
     def onFilterChanged(self):
         self.refreshList()
 
+    def closeEditorAndExecute(self, callback):
+        if self.editorWidget.isVisible():
+            self.autoSaveTimer.stop()
+            if self.hasUnsavedChanges:
+                self.saveMemo()
+            self.editorWidget.hide()
+            self.currentMemo = None
+            self.memoList.clearSelection()
+        callback()
+
     def onMemoSelected(self, item):
-        pass
+        if self.editorWidget.isVisible():
+            self.closeEditorAndExecute(lambda: None)
+
+    def onMemoDoubleClicked(self, item):
+        uid = item.data(Qt.UserRole)
+        memo = self.store.get(uid)
+        if memo:
+            self.onEditMemo(memo)
+
+    def onListReordered(self):
+        from .log import lg
+        lg.log("List reordered")
+        new_order = []
+        for i in range(self.memoList.count()):
+            item = self.memoList.item(i)
+            uid = item.data(Qt.UserRole)
+            memo = self.store.get(uid)
+            if memo:
+                new_order.append(memo)
+
+        self.store.memos = new_order
+        self.store.save()
 
     def onEditMemo(self, memo):
         self.autoSaveTimer.stop()
@@ -404,9 +437,9 @@ class MemosDocker(DockWidget):
         except Exception as e:
             lg.error(f"Copy memo failed: {e}")
 
-    def onSave(self):
+    def onClose(self):
         from .log import lg
-        lg.log("onSave called")
+        lg.log("onClose called")
         self.autoSaveTimer.stop()
         if self.hasUnsavedChanges:
             self.saveMemo()
